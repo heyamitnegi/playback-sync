@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>playback-sync demo</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171c24; --line: #2a323d;
+    --text: #e6edf3; --dim: #8b949e; --good: #3fb950; --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--dim); margin: 0 0 24px; font-size: 14px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 13px; margin: 0 0 2px; text-transform: uppercase; letter-spacing: .06em; }
+  .card .note { color: var(--dim); font-size: 12px; margin: 0 0 14px; min-height: 32px; }
+  .stage {
+    height: 110px; border-radius: 8px; display: flex; align-items: center;
+    justify-content: center; font-size: 44px; font-weight: 700; color: #0b0e12;
+    font-variant-numeric: tabular-nums; transition: background-color .12s;
+  }
+  .bar { height: 5px; border-radius: 3px; background: #0b0e12; margin-top: 8px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: currentColor; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 14px 0 0; font-size: 13px; }
+  dt { color: var(--dim); }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); } .bad { color: var(--bad); }
+  .controls { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; font-size: 14px; padding: 9px 15px; border-radius: 8px; cursor: pointer;
+    background: #21262d; color: var(--text); border: 1px solid var(--line);
+  }
+  button:hover { background: #2a313a; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  .hint { color: var(--dim); font-size: 13px; margin-top: 14px; }
+  code { background: #0b0e12; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>playback-sync</h1>
+  <p class="sub">
+    Open this page in <strong>two windows</strong>, side by side. Then skew one
+    window's clock and watch what survives.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Synchronized</h2>
+      <p class="note">Position from the <em>measured</em> group clock.</p>
+      <div class="stage" id="syncStage">–</div>
+      <div class="bar" id="syncBarWrap"><i id="syncBar" style="width:0%"></i></div>
+      <dl>
+        <dt>position</dt><dd id="syncPos">–</dd>
+        <dt>into cycle</dt><dd id="syncInto">–</dd>
+        <dt>lap</dt><dd id="syncLap">–</dd>
+      </dl>
+    </div>
+
+    <div class="card">
+      <h2>Naive</h2>
+      <p class="note">Position from this device's raw <code>Date.now()</code>.</p>
+      <div class="stage" id="naiveStage">–</div>
+      <div class="bar"><i id="naiveBar" style="width:0%"></i></div>
+      <dl>
+        <dt>position</dt><dd id="naivePos">–</dd>
+        <dt>into cycle</dt><dd id="naiveInto">–</dd>
+        <dt>off by</dt><dd id="naiveOff">–</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="skew">Skew my clock +45s</button>
+    <button id="reset">Reset clock</button>
+  </div>
+
+  <p class="hint" id="status">Measuring the clock…</p>
+
+  <dl style="margin-top:16px">
+    <dt>clock offset</dt><dd id="offset">–</dd>
+    <dt>round trip</dt><dd id="rtt">–</dd>
+    <dt>samples</dt><dd id="samples">0</dd>
+  </dl>
+</div>
+
+<script type="module">
+import { ServerClock, ClockSync, receivePlan, resolveCyclePosition } from '/lib.js';
+
+const COLORS = ['#58a6ff', '#f0883e', '#3fb950', '#bc8cff', '#f85149'];
+const $ = (id) => document.getElementById(id);
+
+/**
+ * The skew is applied to `Date.now` itself, so it is a genuinely wrong device
+ * clock rather than a number this page subtracts somewhere. That is the point:
+ * the synchronized panel must not move.
+ */
+const realNow = Date.now.bind(Date);
+let skewMs = 0;
+Date.now = () => realNow() + skewMs;
+
+const clock = new ServerClock();
+let samples = 0;
+
+new ClockSync({
+  clock,
+  measure: async () => {
+    const requestedAtMs = Date.now();
+    const r = await fetch('/time').then((r) => r.json());
+    samples += 1;
+    return {
+      requestedAtMs,
+      serverReceivedAtMs: r.serverReceivedAtMs,
+      serverSentAtMs: r.serverSentAtMs,
+      receivedAtMs: Date.now(),
+    };
+  },
+  // Faster than production defaults so the demo reacts while you watch it.
+  sampleIntervalMs: 5000,
+  jumpCheckMs: 1000,
+}).start();
+
+let plan = null;
+const loadPlan = async () => {
+  // Both edges stamped, so the plan's own fallback offset is usable before the
+  // measured clock has settled.
+  const requestedAtMs = Date.now();
+  const spec = await fetch('/plan').then((r) => r.json());
+  plan = receivePlan(spec, { requestedAtMs, receivedAtMs: Date.now() });
+};
+await loadPlan();
+setInterval(loadPlan, 30_000);
+
+function paint(prefix, res, planRef) {
+  const stage = $(prefix + 'Stage');
+  const bar = $(prefix + 'Bar');
+  if (!res) { stage.textContent = '–'; return null; }
+  if (res.phase === 'waiting') {
+    stage.style.background = '#30363d';
+    stage.textContent = Math.ceil(res.startsInMs / 1000) + 's';
+    bar.style.width = '0%';
+    return null;
+  }
+  const p = res.position;
+  const slot = planRef.slots[p.index] ?? planRef.slots[0];
+  const pct = Math.min(100, (p.elapsedInPositionMs / (slot.durationSeconds * 1000)) * 100);
+  stage.style.background = COLORS[p.index % COLORS.length];
+  stage.textContent = p.index + 1;
+  bar.style.color = COLORS[p.index % COLORS.length];
+  bar.style.width = pct.toFixed(1) + '%';
+  return p;
+}
+
+function tick() {
+  if (plan) {
+    // Left: the measured group clock. Right: this device's raw calendar.
+    const synced = paint('sync', resolveCyclePosition(plan, clock.nowMs()), plan);
+    const naive = paint('naive', resolveCyclePosition(plan, Date.now()), plan);
+
+    if (synced) {
+      $('syncPos').textContent = `${synced.index + 1} of ${plan.slots.length}`;
+      $('syncInto').textContent = (synced.elapsedInCycleMs / 1000).toFixed(2) + 's';
+      $('syncLap').textContent = synced.cycleCount;
+    }
+    if (naive && synced) {
+      const offBy = naive.elapsedInCycleMs - synced.elapsedInCycleMs;
+      $('naivePos').textContent = `${naive.index + 1} of ${plan.slots.length}`;
+      $('naiveInto').textContent = (naive.elapsedInCycleMs / 1000).toFixed(2) + 's';
+      const el = $('naiveOff');
+      el.textContent = (offBy / 1000).toFixed(2) + 's';
+      el.className = Math.abs(offBy) > 250 ? 'bad' : 'good';
+    }
+  }
+
+  const est = clock.estimate();
+  if (est) {
+    $('offset').textContent = Math.round(est.offsetMs) + ' ms';
+    $('rtt').textContent = Math.round(est.roundTripMs) + ' ms';
+    $('status').innerHTML = skewMs
+      ? 'Your device clock is <strong class="bad">45s wrong</strong> — and the synchronized panel has not moved.'
+      : 'Clock measured. Open a second window: the left panels tick together.';
+  }
+  $('samples').textContent = samples;
+  requestAnimationFrame(tick);
+}
+tick();
+
+$('skew').onclick = () => { skewMs += 45_000; };
+$('reset').onclick = () => { skewMs = 0; };
+</script>
+</body>
+</html>
