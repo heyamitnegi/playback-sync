@@ -40,6 +40,13 @@ export interface SyncTuning {
    * side by side during motion a viewer sees 50–100ms. Measured against the
    * median of recent readings (DRIFT_WINDOW_SAMPLES), never one reading — a
    * signage panel's single readings scatter by about half of this.
+   *
+   * COUPLED TO `rateCorrection`. How tight this may go is set by what your
+   * devices can actually land: on commercial signage panels a seek-and-hold
+   * settles at 105–144ms, so a tolerance below that asks for a correction the
+   * device cannot complete and the stream chases its own noise. With
+   * `rateCorrection` on there is no seek to land, and the same panels run
+   * happily at 70. Tighten this only together with that.
    */
   toleranceMs: number;
   /** How often the stream is compared with the group's clock. */

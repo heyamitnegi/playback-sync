@@ -65,8 +65,17 @@ remains is the devices' own clocks, which nothing in this file reaches.
 
 The default stays `false` because a fleet-wide rate change is not something a
 library should switch on for you, and the stutter/pitch behaviour genuinely is
-per-device. Measure it on one unit, then roll it out — a real deployment running
-this looks like:
+per-device. Measure it on one unit, then roll it out.
+
+**The two settings are coupled.** How tight `toleranceMs` may go is set by what
+your devices can land, not by what you want: a seek-and-hold on commercial
+signage panels settles at 105–144ms, so a tolerance below that asks for a
+correction the device cannot complete, and you get more visible corrections
+rather than tighter sync. Rate correction has no seek to land, so with it on the
+same panels run happily at 70. Tighten the tolerance only together with it —
+never on its own.
+
+A real deployment running this looks like:
 
 ```ts
 { toleranceMs: 70, checkIntervalMs: 500, rateCorrection: true,

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Documented that `toleranceMs` and `rateCorrection` are **coupled**. How tight
+  the tolerance may go is set by what a device can land: a seek-and-hold on
+  commercial signage panels settles at 105–144ms, so a tolerance below that asks
+  for a correction the device cannot complete. With rate correction on there is
+  no seek to land and the same panels run at 70. Defaults are unchanged.
+
+
 ## [0.2.0] - 2026-11-24
 
 Brings the package up to the sync logic running in the player it was extracted
