@@ -94,6 +94,55 @@ export function afterPlainSeekMissed(
 }
 
 /**
+ * Consecutive missed holds, with the lead already at {@link LEAD_MAX_MS},
+ * before the learned profile is thrown away and relearned from the default.
+ *
+ * Three rather than one: a single miss is ordinary (a rebuffer, a stray
+ * keyframe) and the lead is supposed to absorb it. Three in a row with the lead
+ * already as large as it may ever be is not noise — it is the device saying
+ * this profile cannot land, however much lead it is given.
+ */
+export const PINNED_MISS_LIMIT = 3;
+
+/**
+ * Escape from a lead that has ratcheted to its ceiling and cannot come back.
+ *
+ * {@link learnLead} only decays when `wanted <= profile.leadMs`. Once a device's
+ * seeks genuinely cost more than {@link LEAD_MAX_MS}, `wanted` is larger on
+ * EVERY reading, so the rising branch is taken every time and the falling one
+ * becomes unreachable. The lead pins at the ceiling permanently — and if you
+ * persist the profile (which is the point of learning it), it survives reloads
+ * and power cuts too.
+ *
+ * It is worse than a stuck number. A larger lead seeks further ahead, which on
+ * a keyframe-bound stream lands on a worse keyframe, which reads as a slower
+ * seek, which asks for a larger lead. The learner feeds its own failure.
+ *
+ * Measured on a four-display group: every device pinned at `leadMs: 3000` with
+ * nothing held — holds landing BEHIND the group and playing on immediately —
+ * and drift p95 ≈ 3000 ms on all four. Clearing the stored profile by hand put
+ * two of them back to a p95 of 60–95 ms needing no corrections at all, which is
+ * what this does automatically.
+ *
+ * Resets the learned pair but KEEPS `holdMode`: the device does still need
+ * holds (the two that recovered use them), it needed different numbers.
+ *
+ * It is not a cure for a device whose seeks are genuinely that slow — two of
+ * the four re-pinned within four minutes of a clear. It makes a pinned profile
+ * impossible to get permanently stuck in.
+ */
+export function afterPinnedMisses(profile: SeekProfile, consecutiveMisses: number): SeekProfile {
+  if (!profile.holdMode) return profile;
+  if (profile.leadMs < LEAD_MAX_MS) return profile;
+  if (consecutiveMisses < PINNED_MISS_LIMIT) return profile;
+  return {
+    ...profile,
+    leadMs: DEFAULT_SEEK_PROFILE.leadMs,
+    playDelayMs: DEFAULT_SEEK_PROFILE.playDelayMs,
+  };
+}
+
+/**
  * A hold seek, issued `leadUsedMs` ahead of the group, landed `aheadMs` ahead
  * of it (negative = behind). The lead that would have landed exactly on target
  * was `leadUsedMs - aheadMs`; the next lead covers that plus the margin.
@@ -101,6 +150,9 @@ export function afterPlainSeekMissed(
  * Rises at once and falls slowly: one slow seek raises the lead immediately
  * (the next would otherwise land behind), while one quick seek only nudges it
  * down (the one after may be slow again).
+ *
+ * Note what this CANNOT do on its own: come back down once `wanted` is pinned
+ * above the clamp. See {@link afterPinnedMisses}, which is the way out.
  */
 export function learnLead(profile: SeekProfile, leadUsedMs: number, aheadMs: number): SeekProfile {
   if (!Number.isFinite(aheadMs)) return profile;

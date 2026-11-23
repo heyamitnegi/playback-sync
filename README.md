@@ -145,7 +145,7 @@ That is the core loop. Everything below makes it survive real hardware.
 | | |
 |---|---|
 | `ServerClock` | The group's clock: `nowMs`, `hasEstimate`, `observe`, `estimate`, `expectDiscontinuity`, `checkForClockJump` |
-| `ClockSync` | The measurement schedule: `start`, `stop`, `remeasure(reason)` |
+| `ClockSync` | The measurement schedule: `start`, `stop`, `remeasure(reason)`. Burst at startup, a settling window while the device's own clock may still be walked, fast retry before the first success, backoff after |
 | `estimateClockOffset(rt, opts?)` | Four timestamps → `{ offsetMs, roundTripMs }`, or `null` if untrustworthy |
 | `shouldAdopt(current, next, nowMs, opts?)` | Whether a fresh measurement beats the held one |
 | `monotonicNowMs()` | `performance.now()` with a `Date.now()` fallback |
@@ -168,6 +168,7 @@ That is the core loop. Everything below makes it survive real hardware.
 | `syncPhaseAt(plan, nowServerMs, joinAtMs?)` | Where the group is, as a cursor into the sequence |
 | `syncJoinAtMs(plan, nowServerMs)` | When this client should put content up |
 | `syncJoinOutOfReach(...)` | Whether a join was decided on a clock since corrected |
+| `JoinAlignment` | One seek-and-hold alignment after a join: `request`, `pendingFor`, `settle`, `pending` |
 | `syncRunEndsAtMs` · `syncAlignment` · `syncStreamDrift` · `syncCursorInRun` | Joined-stream supervision |
 
 ### Drift & seek
@@ -178,6 +179,7 @@ That is the core loop. Everything below makes it survive real hardware.
 | `decideDriftCorrection(driftMs, tuning, rateActive)` | `none` / `rate` / `rate-reset` / `seek-at-boundary` / `seek-now` |
 | `resolveSyncTuning(fromServer?, fromDevice?)` | Validated, clamped, layered settings |
 | `afterPlainSeekMissed` · `learnLead` · `learnPlayDelay` · `planHold` · `readSeekProfile` | Late-landing seek handling |
+| `afterPinnedMisses(profile, consecutiveMisses)` | Relearn a lead that has ratcheted to its ceiling and cannot come back down |
 
 ### Authoring & utilities
 

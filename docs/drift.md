@@ -48,6 +48,31 @@ Rate correction has **hysteresis**: it engages past the tolerance and runs until
 the drift is inside *half* of it, so a stream sitting near the threshold does not
 toggle its rate on every check.
 
+### Turn on rate correction before you touch the tolerance
+
+Measured on a four-display group, one setting changed at a time:
+
+| Change | Effect |
+|---|---|
+| `rateCorrection: false` → `true` | Missed corrections **41% → 0.7%** of checks |
+| Moving `toleranceMs` | Barely registered |
+
+This is the opposite of where tuning effort naturally goes. A tighter tolerance
+*feels* like the alignment knob and is not: holds settle at 105–144ms against a
+100ms tolerance, so a tolerance much below that asks for a correction the device
+cannot land — more visible corrections, not tighter sync. Past that point what
+remains is the devices' own clocks, which nothing in this file reaches.
+
+The default stays `false` because a fleet-wide rate change is not something a
+library should switch on for you, and the stutter/pitch behaviour genuinely is
+per-device. Measure it on one unit, then roll it out — a real deployment running
+this looks like:
+
+```ts
+{ toleranceMs: 70, checkIntervalMs: 500, rateCorrection: true,
+  maxRateAdjust: 0.02, seekAboveMs: 1000, boundarySeek: true }
+```
+
 ---
 
 ## Validating settings off the wire
@@ -112,6 +137,37 @@ Both figures are learned per device and worth persisting across restarts —
 `learnLead` **rises at once and falls slowly**: one slow seek raises the lead
 immediately, because the next would otherwise land behind; one quick seek only
 nudges it down, because the one after may be slow again.
+
+### When the lead pins at its ceiling
+
+`learnLead` only decays when the lead it wants is no larger than the one it has.
+Once a device's seeks genuinely cost more than `LEAD_MAX_MS` (3s), the wanted
+lead is larger on *every* reading — so the rising branch wins every time and the
+falling one is unreachable. The lead pins at the ceiling permanently, and
+because the profile is persisted, it survives reloads and power cuts.
+
+It is worse than a stuck number. A larger lead seeks further ahead, which on a
+keyframe-bound stream lands on a worse keyframe, which reads as a slower seek,
+which asks for a larger lead. **The learner feeds its own failure.**
+
+Measured on a four-display group: every device pinned at `leadMs: 3000` with
+nothing held — holds landing *behind* the group and playing on immediately — and
+drift p95 ≈ 3000ms on all four. Clearing the stored profile by hand put two of
+them back to a p95 of 60–95ms needing no corrections at all.
+
+```ts
+// Count holds that missed in a row, and hand the count over:
+profile = afterPinnedMisses(profile, consecutiveMisses);
+```
+
+After `PINNED_MISS_LIMIT` (3) consecutive misses with the lead already at the
+ceiling, the learned pair is relearned from the default. Three rather than one:
+a single miss is ordinary and the lead is supposed to absorb it. `holdMode` is
+**kept** — the device does still need holds, it needed different numbers.
+
+It is not a cure for a device whose seeks are genuinely that slow; two of the
+four re-pinned within four minutes of a clear. It makes a pinned profile
+impossible to get permanently stuck in, which is what the group was stuck in.
 
 The cost is a held frame of about 500ms instead of a visible jump landing
 somewhere wrong. A landing further ahead than `HOLD_MAX_MS` (2.5s) plays on

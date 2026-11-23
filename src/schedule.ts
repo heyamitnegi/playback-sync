@@ -135,6 +135,40 @@ export function syncPhaseAt(
 export const SYNC_JOIN_GRACE_MS = 20_000;
 
 /**
+ * The largest share of the whole CYCLE the grace may ever take.
+ *
+ * The grace was capped at position 0's own duration, on the reading that past
+ * it the top of the lap is genuinely over, and joining it would put this client
+ * on position 1 while calling it position 0. That is right whenever position 0
+ * is a small part of the cycle. With exactly ONE position it is vacuous:
+ * position 0 IS the cycle, so the cap equals the cycle, `intoLapMs` can never
+ * exceed it, and the grace swallows the entire lap.
+ *
+ * A one-position group therefore never held. Every rejoin took the lap already
+ * in progress and seeked into the middle of the clip — the one thing the hold
+ * exists to avoid, on exactly the devices whose seeks land late (see
+ * `seek-hold.ts`). Found on a group whose playlist is a single 7.007s clip: a
+ * display restarted from its remote came back mid-clip with no synchronising
+ * notice and no countdown, and sat out of step.
+ *
+ * Capping on the cycle rather than on position 0 binds only when position 0 is
+ * most of the lap, which is the case that was broken — a short opener inside a
+ * long cycle keeps the behaviour it had, since its own duration is the smaller
+ * limit.
+ *
+ * A half is the loosest value that still makes the cap mean something: it binds
+ * only where position 0 is at least half the lap, which is the shape that was
+ * broken, and leaves every playlist that works today untouched.
+ *
+ * What it does NOT do: stop a one-position group seeking on a join altogether.
+ * A client arriving in the first half of the lap still takes it in progress,
+ * and on these devices that is still a seek. Narrowing it further is a product
+ * decision about how long a synchronising notice may sit on a display, and
+ * wants evidence rather than a smaller number chosen here.
+ */
+export const SYNC_JOIN_GRACE_MAX_CYCLE_SHARE = 0.5;
+
+/**
  * The instant this client joins its group: when it first puts content up,
  * holding a "synchronising" notice until then.
  *
@@ -167,10 +201,17 @@ export function syncJoinAtMs(plan: SyncPlan, nowServerMs: number): number {
 
   const lapStartMs = plan.startAtMs + Math.floor(sinceStart / cycleMs) * cycleMs;
   const intoLapMs = nowServerMs - lapStartMs;
-  // Capped at position 0's own duration: past that the top of the lap is
-  // genuinely over, and joining it would put this client on position 1 while
-  // calling it position 0.
-  const graceMs = Math.min(SYNC_JOIN_GRACE_MS, Math.round(plan.slots[0].durationSeconds * 1000));
+  // Capped at a SHARE of the cycle as well as at position 0's own duration:
+  // past that the top of the lap is genuinely over, and joining it would put
+  // this client on position 1 while calling it position 0. The share is what
+  // makes the cap mean something on a one-position playlist, where position 0
+  // is the whole cycle and a full-duration cap can never bite — see
+  // {@link SYNC_JOIN_GRACE_MAX_CYCLE_SHARE}.
+  const graceMs = Math.min(
+    SYNC_JOIN_GRACE_MS,
+    Math.round(plan.slots[0].durationSeconds * 1000),
+    Math.round(cycleMs * SYNC_JOIN_GRACE_MAX_CYCLE_SHARE),
+  );
   if (intoLapMs <= graceMs) return lapStartMs;
   for (const slot of plan.slots) {
     const offsetMs = Math.round(slot.startOffsetSeconds * 1000);

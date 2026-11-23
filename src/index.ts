@@ -59,7 +59,9 @@ export {
   LATE_LANDING_MAX_MS,
   LEAD_MAX_MS,
   LEAD_MIN_MS,
+  PINNED_MISS_LIMIT,
   PLAY_DELAY_MAX_MS,
+  afterPinnedMisses,
   afterPlainSeekMissed,
   learnLead,
   learnPlayDelay,
@@ -69,6 +71,7 @@ export {
 export type { HoldPlan, SeekProfile } from './seek-hold';
 
 export {
+  SYNC_JOIN_GRACE_MAX_CYCLE_SHARE,
   SYNC_JOIN_GRACE_MS,
   syncAlignment,
   syncCursorInRun,
@@ -80,5 +83,7 @@ export {
   syncStreamDrift,
 } from './schedule';
 export type { SyncCursor, SyncPhase, SyncRun, SyncSequence } from './schedule';
+
+export { JoinAlignment } from './join-alignment';
 
 export { planFrom, slotsFrom } from './author';
