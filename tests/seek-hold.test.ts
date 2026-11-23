@@ -4,6 +4,8 @@ import {
   HOLD_MAX_MS,
   LEAD_MAX_MS,
   LEAD_MIN_MS,
+  PINNED_MISS_LIMIT,
+  afterPinnedMisses,
   afterPlainSeekMissed,
   learnLead,
   learnPlayDelay,
@@ -116,5 +118,55 @@ describe('readSeekProfile', () => {
 
   it('clamps a stored value that is out of range', () => {
     expect(readSeekProfile({ leadMs: 99_999 }).leadMs).toBe(LEAD_MAX_MS);
+  });
+});
+
+describe('afterPinnedMisses', () => {
+  const pinned = { holdMode: true, leadMs: LEAD_MAX_MS, playDelayMs: 400 };
+
+  it('relearns a lead that has ratcheted to its ceiling and cannot come back', () => {
+    // learnLead only decays when `wanted <= leadMs`. Once a device's seeks cost
+    // more than LEAD_MAX_MS, `wanted` is larger on EVERY reading, so the rising
+    // branch wins every time and the falling one is unreachable — and a
+    // persisted profile carries that across reloads and power cuts.
+    const p = afterPinnedMisses(pinned, PINNED_MISS_LIMIT);
+    expect(p.leadMs).toBe(DEFAULT_SEEK_PROFILE.leadMs);
+    expect(p.playDelayMs).toBe(DEFAULT_SEEK_PROFILE.playDelayMs);
+  });
+
+  it('keeps hold mode: the device needed different numbers, not a different mode', () => {
+    expect(afterPinnedMisses(pinned, PINNED_MISS_LIMIT).holdMode).toBe(true);
+  });
+
+  it('waits for several misses in a row, because one is ordinary', () => {
+    // A single miss is a rebuffer or a stray keyframe, which the lead is
+    // supposed to absorb. Three with the lead already at its ceiling is the
+    // device saying this profile cannot land, however much lead it is given.
+    for (let misses = 0; misses < PINNED_MISS_LIMIT; misses += 1) {
+      expect(afterPinnedMisses(pinned, misses)).toBe(pinned);
+    }
+  });
+
+  it('leaves a lead that is still below the ceiling alone', () => {
+    // Not pinned: learnLead can still bring this one down on its own.
+    const below = { ...pinned, leadMs: LEAD_MAX_MS - 1 };
+    expect(afterPinnedMisses(below, PINNED_MISS_LIMIT + 5)).toBe(below);
+  });
+
+  it('does nothing on a device that does not hold at all', () => {
+    const plain = { holdMode: false, leadMs: LEAD_MAX_MS, playDelayMs: 400 };
+    expect(afterPinnedMisses(plain, PINNED_MISS_LIMIT)).toBe(plain);
+  });
+
+  it('is the only way out: learnLead on its own stays pinned', () => {
+    // The regression this guards. Every reading asks for more than the ceiling,
+    // so the profile never moves however many good-faith readings arrive.
+    let profile = { holdMode: true, leadMs: LEAD_MAX_MS, playDelayMs: 0 };
+    for (let i = 0; i < 20; i += 1) {
+      // Landed 800ms BEHIND despite the full lead: wanted > LEAD_MAX_MS.
+      profile = learnLead(profile, LEAD_MAX_MS, -800);
+    }
+    expect(profile.leadMs).toBe(LEAD_MAX_MS);
+    expect(afterPinnedMisses(profile, PINNED_MISS_LIMIT).leadMs).toBe(DEFAULT_SEEK_PROFILE.leadMs);
   });
 });

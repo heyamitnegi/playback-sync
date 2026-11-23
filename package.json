@@ -1,6 +1,6 @@
 {
   "name": "playback-sync",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Synchronize video playback across multiple screens and devices. Shared clock, drift correction and schedule resolution as pure functions, with no dependencies.",
   "license": "MIT",
   "author": "heyamitnegi",

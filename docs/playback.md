@@ -106,9 +106,66 @@ That last row matters. Holding for the next lap means a client rebooting
 mid-playlist sits blank for up to the *whole playlist* while its neighbours play
 on. Joining at the next item bounds the wait to one item.
 
-The grace is capped at position 0's own duration — past that the top of the lap
-is genuinely over, and joining it would put the client on position 1 while
-calling it position 0.
+The grace is capped at position 0's own duration **and** at
+`SYNC_JOIN_GRACE_MAX_CYCLE_SHARE` (half) of the whole cycle — past that the top
+of the lap is genuinely over, and joining it would put the client on position 1
+while calling it position 0.
+
+The cycle share is what makes the cap mean anything on a **one-position
+playlist**. There, position 0 *is* the cycle, so a cap at its own duration can
+never bite: the grace swallowed the entire lap and the client never held at all.
+Every rejoin took the lap in progress and seeked into the middle of the clip —
+the one thing the hold exists to avoid, on exactly the devices whose seeks land
+late. Found on a group playing a single 7.007s clip: a display restarted from
+its remote came back mid-clip with no synchronising notice and no countdown, and
+sat out of step.
+
+A short opener inside a long cycle is untouched, since its own duration is still
+the smaller limit. And this does *not* stop a one-position group seeking on a
+join altogether — a client arriving in the first half of the lap still takes it
+in progress. Narrowing further is a product decision about how long a
+synchronising notice may sit on a display.
+
+### Align once after the join
+
+A client that joins and starts its stream directly, without a seek-and-hold, can
+sit ~150ms off **on the glass** while its own drift reading (`currentTime`
+against the clock) shows ~20ms — well inside the tolerance, so it is never
+corrected. It reports itself healthy and is visibly early.
+
+Measured on a four-display group, filmed at 30fps: one display restarted, came
+up, measured its clock normally and took no correction at all. On the glass it
+switched 4–5 frames (~130–170ms) before the other three at every cut, while
+reporting +12..+27ms of drift. A playlist change later took it through two
+seek-and-holds and the group was in step afterwards — and its clock offset had
+not moved (-49/-55/-45ms), so the clock was not the cause. Of 21 restarts in one
+session, the 20 with a seek-and-hold within 90s of boot came back in step; the
+one without was the one off.
+
+`JoinAlignment` makes that explicit instead of leaving it to chance:
+
+```ts
+const joins = new JoinAlignment();
+
+// The renderer decided a join (new plan version, boot, re-decided join):
+joins.request();
+
+// In the drift check, once it has a full window of readings:
+if (profile.holdMode && joins.pendingFor(checkStartedMs)) {
+  // Align through seek-and-hold even though the drift is inside tolerance.
+}
+
+// Aligned — or a seek or hold already went through the same path:
+joins.settle();
+```
+
+Only a check that **started after** the request takes it: an older one belongs
+to the stream the join replaces. And only on a device that corrects by
+seek-and-hold — one whose seeks land has no hold to align with, so drop the
+request there.
+
+Where a joining stream gets a head start (a run primed before it is shown),
+almost every join is forced through a correction anyway, which hides this.
 
 ### When the clock moves under a decided join
 

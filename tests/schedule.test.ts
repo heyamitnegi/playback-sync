@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SYNC_JOIN_GRACE_MAX_CYCLE_SHARE,
   SYNC_JOIN_GRACE_MS,
   syncAlignment,
   syncCursorInRun,
@@ -113,6 +114,54 @@ describe('syncJoinAtMs', () => {
     });
     expect(syncJoinAtMs(short, START + 9000)).toBe(START);
     expect(syncJoinAtMs(short, START + 11_000)).toBe(START + 30_000);
+  });
+});
+
+describe('syncJoinAtMs, one-position playlists', () => {
+  /** A single 7.007s clip — position 0 IS the whole cycle. */
+  const single = (): SyncPlan =>
+    plan({
+      cycleSeconds: 7.007,
+      slots: [{ index: 0, startOffsetSeconds: 0, durationSeconds: 7.007 }],
+    });
+
+  it('holds for the next lap rather than taking the one in progress', () => {
+    // The grace used to be capped at position 0's own duration, which on a
+    // one-position playlist IS the cycle: the cap could never bite, so the
+    // group never held and every rejoin seeked into the middle of the clip —
+    // the one thing the hold exists to avoid, on exactly the devices whose
+    // seeks land late.
+    const p = single();
+    const cycleMs = 7007;
+    const pastHalf = START + Math.round(cycleMs * 0.75);
+    expect(syncJoinAtMs(p, pastHalf)).toBe(START + cycleMs);
+  });
+
+  it('still takes the lap in progress inside the capped grace', () => {
+    // Deliberately unchanged: narrowing further is a product decision about how
+    // long a synchronising notice may sit on a display.
+    const p = single();
+    const insideGrace = START + Math.round(7007 * SYNC_JOIN_GRACE_MAX_CYCLE_SHARE) - 1;
+    expect(syncJoinAtMs(p, insideGrace)).toBe(START);
+  });
+
+  it('leaves a short opener inside a long cycle alone', () => {
+    // Position 0's own duration is the smaller limit there, so the cycle share
+    // never binds and every playlist that works today is untouched.
+    const p = plan({
+      cycleSeconds: 900,
+      slots: [
+        { index: 0, startOffsetSeconds: 0, durationSeconds: 5 },
+        { index: 1, startOffsetSeconds: 5, durationSeconds: 450 },
+        { index: 2, startOffsetSeconds: 455, durationSeconds: 445 },
+      ],
+    });
+    // Inside the 5s opener, the lap in progress — as it was before the cap.
+    expect(syncJoinAtMs(p, START + 4000)).toBe(START);
+    // Past the opener, the next position boundary. Well inside half the cycle,
+    // so the share would have allowed the lap; position 0's own duration is the
+    // smaller limit and still decides.
+    expect(syncJoinAtMs(p, START + 6000)).toBe(START + 455_000);
   });
 });
 

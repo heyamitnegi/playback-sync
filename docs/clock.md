@@ -161,13 +161,69 @@ socket.on('reconnect', () => sync.remeasure('socket-reconnected'));
 |---|---|
 | **Burst of 3 at startup** | One sample can be unlucky — a retransmit, a GC pause, a burst of wifi contention. The fastest of three decides where the client sits for its first minute, which is the minute it is most likely to be watched. |
 | **One sample a minute after that** | Sized against *drift*, not the network. A longer interval lets drift accumulate; a shorter one buys nothing measurable. |
-| **10-minute backoff on failure** | A server with no time endpoint answers 404 forever. Backing off stops a request a minute for the life of the device, while still recovering on its own once the server is fixed — no reboot, no site visit. |
+| **A 2-minute settling window** | For `settleWindowMs` after `start()`, samples come every 10s and each one **replaces** the held estimate rather than competing with it on round trip. See below. |
+| **3-second retry before the first success** | A device whose very first sample fails is usually still bringing its link up, not talking to a server without a time endpoint. See below. |
+| **10-minute backoff on failure** | A server with no time endpoint answers 404 forever. Backing off stops a request a minute for the life of the device, while still recovering on its own once the server is fixed — no reboot, no site visit. Tell this case apart with `isUnsupported`. |
 | **Jump check every 5s** | Self-detected wakes, per above. |
 | **Coalescing** | One wake fires visibility + reconnect + heartbeat within seconds. All of them together are one reason, not four bursts. A detected jump is never coalesced — it is direct evidence, and the monotonic reading the window is measured on is the very thing a suspend stops. |
 
 `measure` returns `null` for "nothing to measure against yet" (not signed in, no
-endpoint configured) — not a failure, no backoff. **Throw** when the request
-genuinely failed.
+endpoint configured) — not a failure, no backoff, and it does not spend a sample
+of the startup burst either, because a client that is about to sign in needs
+those samples at the moment it does. **Throw** when the request genuinely
+failed.
+
+### The settling window
+
+The boot estimate is the most protected and the least trustworthy. A sample
+taken seconds after start can have an excellent round trip and still be stale
+minutes later, because what moved was not the network — it was the device's own
+calendar. A TV or embedded board corrects its clock by NTP shortly after boot,
+and when it does so by **slewing** rather than stepping, `checkForClockJump`
+never fires: there is no discontinuity to catch, only a held offset quietly
+going wrong by however far the clock was walked.
+
+Measured on a four-display group: two devices restarted from the remote, and
+their offsets moved by 894ms and 554ms across the reboot while their untouched
+neighbours moved by 29ms and 17ms. Round trips throughout were 60–83ms, which
+bounds the error from network asymmetry at about ±40ms — two orders off what was
+seen. The estimates then sat frozen for 397s, because `shouldAdopt` keeps the
+fastest round trip it has seen and nothing could displace them.
+
+So inside the window the newest reading wins outright rather than the fastest:
+while the calendar is still being walked, recency beats round trip. Samples
+inside the startup burst are exempt — the ranking is already doing the right
+thing there, and forcing all three would throw away the fastest of them. Set
+`settleWindowMs: 0` to switch it off.
+
+### Before the first measurement
+
+A panel is not on the network the instant the process starts. If the first
+sample lands in that window it fails, and the long backoff — written for a
+server with no time endpoint — catches a device that is merely still booting.
+
+What that costs is not a missing measurement, it is a **wrong one that nothing
+can see**. The client joins its group on the coarse single-stamp estimate from
+the plan, and because the join and the drift check both read that same clock, it
+reports itself healthy (~20ms of drift) while being visibly out of step on the
+glass. Measured on a display that restarted at 10:13: the held offset sat frozen
+at exactly -475ms for ten minutes reporting -17 to -27ms of drift, then jumped
++505ms the moment the backoff ended and the display snapped into sync on its
+own. A restart whose first sample happened to succeed came back in sync
+immediately — which is why it only went wrong "sometimes".
+
+So before the first success, failures retry every `bootRetryMs` for
+`bootRetryWindowMs`, keeping the burst. A server that has no endpoint answers
+rather than fails, so give it `isUnsupported` and it goes straight to the
+backoff instead:
+
+```ts
+new ClockSync({
+  clock,
+  measure,
+  isUnsupported: (err) => (err as { status?: number }).status === 404,
+});
+```
 
 ## Checking it on real hardware
 

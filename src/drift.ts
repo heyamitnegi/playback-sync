@@ -11,9 +11,27 @@
  *   hardware: commercial signage panels scatter ±50ms reading to reading,
  *   consumer TVs barely at all — hence the median, see DRIFT_WINDOW_SAMPLES;
  * - whether a display changes `playbackRate` smoothly on its hardware pipeline,
- *   or stutters, shifts the audio's pitch, or ignores it, has not been — which
+ *   or stutters, shifts the audio's pitch, or ignores it, is per-device — which
  *   is why rate correction is off by default. Switch it on against a test
  *   device, not a fleet.
+ *
+ * ── What turned out to matter ─────────────────────────────────────────────
+ *
+ * Measured on a four-display group, changing one setting at a time: turning
+ * RATE CORRECTION ON is the win. Missed corrections went from 41% to 0.7% of
+ * checks. Moving `toleranceMs` barely registered by comparison.
+ *
+ * That is the opposite of where tuning effort naturally goes, so it is worth
+ * saying plainly: reach for `rateCorrection` first, and do not expect a tighter
+ * tolerance to buy alignment. It cannot. Holds settle at 105–144ms against a
+ * 100ms tolerance, so a tolerance below roughly that is asking for a correction
+ * the device cannot land, and the result is more visible corrections, not
+ * tighter sync. Past that point what is left is the devices' own clocks, which
+ * no setting here reaches.
+ *
+ * The default stays `false` regardless, because a fleet-wide rate change is not
+ * something a library should switch on for you — and the stutter/pitch
+ * behaviour really is per-device. Measure it on one unit, then roll it out.
  */
 
 export interface SyncTuning {
